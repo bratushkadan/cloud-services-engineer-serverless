@@ -1,0 +1,20 @@
+openapi: "3.0.0"
+info:
+  version: 1.0.0
+  title: Test API
+paths:
+  /handler:
+    get:
+      summary: Python Cloud Function Handler
+      parameters:
+        - name: user
+          in: query
+          description: User to appear in greetings
+          required: true
+          schema:
+            type: string
+      x-yc-apigateway-integration:
+        type: cloud-functions
+        function_id: ${FN_ID}
+        service_account_id: ${SERVICE_ACCOUNT_ID}
+      operationId: ${CLOUD_FN_NAME}-handler

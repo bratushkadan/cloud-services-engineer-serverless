@@ -33,7 +33,7 @@ yc serverless function create --name "${CLOUD_FN_NAME}"
 ### Create source code
 
 ```bash
-export FN_PKG_SOURCE_CODE=$(mktemp /tmp/index.py)
+export FN_PKG_SOURCE_CODE="$(mktemp -d)/index.py"
 cat <<EOF > "${FN_PKG_SOURCE_CODE}"
 def handler(event, context):
     return {
