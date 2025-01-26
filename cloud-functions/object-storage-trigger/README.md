@@ -81,3 +81,48 @@ yc serverless function version create \
 ```bash
 yc serverless function invoke --name "${CLOUD_FN_NAME}"
 ```
+
+## Adding trigger
+
+### Create function that processes trigger
+
+```bash
+yc serverless function create --name my-trigger-function
+
+yc serverless function version create \
+  --function-name my-trigger-function \
+  --memory 256m \
+  --execution-timeout 5s \
+  --runtime python312 \
+  --entrypoint index.handler \
+  --service-account-id $SERVICE_ACCOUNT_ID \
+  --source-path ./trigger-code/
+```
+
+### Create trigger
+
+```bash
+yc serverless trigger create object-storage \
+  --name object-storage-trigger \
+  --bucket-id $BUCKET_NAME \
+  --events 'create-object' \
+  --invoke-function-name my-trigger-function \
+  --invoke-function-service-account-id $SERVICE_ACCOUNT_ID
+```
+
+### Create timer trigger
+
+```bash
+yc serverless trigger create timer \
+  --name "${CLOUD_FN_NAME}-timer" \
+  --invoke-function-name my-trigger-function \
+  --invoke-function-service-account-id $SERVICE_ACCOUNT_ID \
+  --cron-expression '* * * * ? *'
+```
+
+Delete this trigger:
+
+```bash
+yc serverless trigger delete timer \
+  --name "${CLOUD_FN_NAME}-timer"
+```
