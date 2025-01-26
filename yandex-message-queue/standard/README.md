@@ -1,5 +1,15 @@
 # Yandex Message Queue Lab – register, send confirmation email, validate confirmtion token & validate email
 
+## Roadmap
+
+- [ ] Setup YMQ
+- [x] Implement Email Confirmation Sender
+- [ ] Add YMQ publishing to the Email Confirmation Sender
+- [ ] Implement Email Confirmer
+- [ ] Implement Confirm User Account (possibly a mock service that just reads the value from the YMQ)
+- [ ] Setup API Gateway
+- [ ] Deploy & test the integrations
+
 ## YDB
 
 Get serverless YDB
