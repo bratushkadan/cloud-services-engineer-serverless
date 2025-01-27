@@ -19,6 +19,8 @@ var (
 
 type EmailConfirmationAppConf struct {
 	YdbDocApiEndpoint  string
+	SqsEndpoint        string
+	withSqs            bool
 	AwsAccessKeyId     string
 	AwsSecretAccessKey string
 
@@ -31,8 +33,16 @@ func NewEmailConfirmationAppConf() *EmailConfirmationAppConf {
 	return &EmailConfirmationAppConf{}
 }
 
+func (c *EmailConfirmationAppConf) WithSqs() *EmailConfirmationAppConf {
+	c.withSqs = true
+	return c
+}
+
 func (c *EmailConfirmationAppConf) LoadEnv() *EmailConfirmationAppConf {
 	c.YdbDocApiEndpoint = conf.MustEnv("YDB_DOC_API_ENDPOINT")
+	if c.withSqs {
+		c.SqsEndpoint = conf.MustEnv("SQS_ENDPOINT")
+	}
 	c.AwsAccessKeyId = conf.MustEnv("AWS_ACCESS_KEY_ID")
 	c.AwsSecretAccessKey = conf.MustEnv("AWS_SECRET_ACCESS_KEY")
 
@@ -44,15 +54,13 @@ func (c *EmailConfirmationAppConf) LoadEnv() *EmailConfirmationAppConf {
 
 type EmailConfirmer interface {
 	Confirm(ctx context.Context, token string) error
-}
-
-type EmailConfirmationSender interface {
 	Send(ctx context.Context, email string) error
 }
 
 type EmailConfirmation struct {
-	l         *zap.Logger
-	repo      *ydynamo.DynamoDbEmailConfirmator
+	l    *zap.Logger
+	repo *ydynamo.DynamoDbEmailConfirmator
+	// sqs *
 	confirmer *confirmer.EmailConfirmationLinkSender
 }
 

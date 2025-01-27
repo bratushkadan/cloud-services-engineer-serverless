@@ -17,7 +17,7 @@ import (
 // }
 
 type HandlerRequestBody struct {
-	Email string `json:"email"`
+	Token string `json:"token"`
 }
 
 type HandlerResponse struct {
@@ -100,8 +100,8 @@ func (s *httpHandlerService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	if err := s.emailConfirmationSender.Send(ctx, b.Email); err != nil {
-		s.l.Error("failed to send confirmation email", zap.Error(err), zap.String("email", b.Email))
+	if err := s.emailConfirmationSender.Confirm(ctx, b.Token); err != nil {
+		s.l.Error("failed to send confirmation email", zap.Error(err), zap.String("email", b.Token))
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte(`{"errors": ["failed to send confirmation email"]}`))
 		return
