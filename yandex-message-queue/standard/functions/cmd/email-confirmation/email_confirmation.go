@@ -1,10 +1,10 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
+	"errors"
 	"fns/reg/internal/service"
-	"io"
+	"fns/reg/pkg/httpmock"
 	"log"
 	"net/http"
 	"strings"
@@ -12,67 +12,21 @@ import (
 	"go.uber.org/zap"
 )
 
-// func main() {
-//
-// }
-
 type HandlerRequestBody struct {
 	Token string `json:"token"`
 }
 
-type HandlerResponse struct {
+type HandlerResponseSuccess struct {
 	Ok bool `json:"ok"`
 }
-
-// TODO: move to pkg testing
-
-// MockResponseWriter is a mock for http.ResponseWriter
-type MockResponseWriter struct {
-	HeaderMap http.Header
-	Body      *bytes.Buffer
-	Status    int
+type HandlerResponseFailure struct {
+	Errors []string `json:"errors"`
 }
-
-func NewMockResponseWriter() *MockResponseWriter {
-	return &MockResponseWriter{
-		HeaderMap: make(http.Header),
-		Body:      new(bytes.Buffer),
-		Status:    http.StatusOK,
-	}
-}
-
-func (m *MockResponseWriter) BodyBuffer() *bytes.Buffer {
-	return m.Body
-}
-
-func (m *MockResponseWriter) Header() http.Header {
-	return m.HeaderMap
-}
-
-func (m *MockResponseWriter) Write(b []byte) (int, error) {
-	return m.Body.Write(b)
-}
-
-func (m *MockResponseWriter) WriteHeader(statusCode int) {
-	m.Status = statusCode
-}
-
-// ReadCloser wraps a strings.Reader to provide a no-op Close method.
-type ReadCloser struct {
-	io.Reader
-}
-
-// Close implements the io.Closer interface by adding a no-op Close method.
-func (ReadCloser) Close() error {
-	return nil
-}
-
-// ENDTODO
 
 func main() {
-	w := NewMockResponseWriter()
+	w := httpmock.NewMockResponseWriter()
 	r := &http.Request{
-		Body: &ReadCloser{Reader: strings.NewReader(`{"email": "bratushkadan@gmail.com"}`)},
+		Body: &httpmock.ReadCloser{Reader: strings.NewReader(`{"token": "x6uaruup4xqiyjaemg7nzwwe22gfuppnytv6hgxvhyeak3eofvzt5bk7zackkodn7witwipceut4kq2b5p3voi5rxm2p7zg3uxolawy"}`)},
 	}
 	Handler(w, r)
 }
@@ -87,23 +41,38 @@ type Executer interface {
 }
 
 type httpHandlerService struct {
-	l                       *zap.Logger
-	emailConfirmationSender service.EmailConfirmer
+	l              *zap.Logger
+	emailConfirmer service.EmailConfirmer
 }
 
 func (s *httpHandlerService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	var errs []string
+
 	var b HandlerRequestBody
 	if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
+		errs = append(errs, "bad request body, 'token' field required.")
 		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte(`{"errors":["bad request body, 'email' field required."]}`))
+		if err := json.NewEncoder(w).Encode(&HandlerResponseFailure{Errors: errs}); err != nil {
+			s.l.Error("failed to serialize response", zap.Error(err))
+		}
 		return
 	}
 
 	ctx := r.Context()
-	if err := s.emailConfirmationSender.Confirm(ctx, b.Token); err != nil {
-		s.l.Error("failed to send confirmation email", zap.Error(err), zap.String("email", b.Token))
-		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte(`{"errors": ["failed to send confirmation email"]}`))
+	if err := s.emailConfirmer.Confirm(ctx, b.Token); err != nil {
+		switch {
+		case errors.Is(err, service.ErrInvalidConfirmationToken) || errors.Is(err, service.ErrConfirmationTokenExpired):
+			w.WriteHeader(http.StatusBadRequest)
+			errs = append(errs, err.Error())
+		default:
+			s.l.Error("failed to confirm email", zap.Error(err))
+			w.WriteHeader(http.StatusInternalServerError)
+			errs = append(errs, "failed to confirm email")
+		}
+
+		if err := json.NewEncoder(w).Encode(&HandlerResponseFailure{Errors: errs}); err != nil {
+			s.l.Error("failed to serialize response", zap.Error(err))
+		}
 		return
 	}
 
@@ -118,7 +87,7 @@ func mustPrepareExecuter() Executer {
 	}
 
 	svc, err := service.NewEmailConfirmation(
-		service.NewEmailConfirmationAppConf().LoadEnv(),
+		service.NewEmailConfirmationAppConf().WithSqs().LoadEnv(),
 		logger,
 	)
 	if err != nil {
@@ -126,7 +95,7 @@ func mustPrepareExecuter() Executer {
 	}
 
 	return &httpHandlerService{
-		l:                       logger,
-		emailConfirmationSender: svc,
+		l:              logger,
+		emailConfirmer: svc,
 	}
 }

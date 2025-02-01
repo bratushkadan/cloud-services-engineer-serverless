@@ -33,6 +33,12 @@ func (r endpointResolver) ResolveEndpoint(ctx context.Context, _ sqs.EndpointPar
 
 type Ymq struct {
 	Cl *sqs.Client
+
+	endpoint string
+}
+
+func (q Ymq) Endpoint() string {
+	return q.endpoint
 }
 
 func New(ctx context.Context, accessKeyId, secretAccessKey string, sqsEndpoint string, logger *zap.Logger) (*Ymq, error) {
@@ -49,6 +55,6 @@ func New(ctx context.Context, accessKeyId, secretAccessKey string, sqsEndpoint s
 		newEndpointResolver(sqsEndpoint),
 	))
 
-	return &Ymq{Cl: client}, nil
+	return &Ymq{Cl: client, endpoint: sqsEndpoint}, nil
 
 }

@@ -11,10 +11,15 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
+	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/expression"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	smithyendpoints "github.com/aws/smithy-go/endpoints"
 	"go.uber.org/zap"
+)
+
+const (
+	TableEmailConfirmationTokens = "email_confirmation_tokens"
 )
 
 type EmailConfirmationRecord struct {
@@ -76,7 +81,7 @@ func NewDynamoDbEmailConfirmator(ctx context.Context, accessKeyId, secretAccessK
 
 func (db *DynamoDbEmailConfirmator) InsertToken(ctx context.Context, email, token string) error {
 	item := &dynamodb.PutItemInput{
-		TableName: aws.String("email_confirmation_tokens"),
+		TableName: aws.String(TableEmailConfirmationTokens),
 		Item: map[string]types.AttributeValue{
 			"email":      &types.AttributeValueMemberS{Value: email},
 			"token":      &types.AttributeValueMemberS{Value: token},
@@ -100,7 +105,7 @@ func (db *DynamoDbEmailConfirmator) InsertToken(ctx context.Context, email, toke
 
 func (db *DynamoDbEmailConfirmator) ListTokensEmail(ctx context.Context, email string) ([]EmailConfirmationRecord, error) {
 	input := &dynamodb.QueryInput{
-		TableName:              aws.String("email_confirmation_tokens"),
+		TableName:              aws.String(TableEmailConfirmationTokens),
 		KeyConditionExpression: aws.String("email = :emailVal"),
 		ExpressionAttributeValues: map[string]types.AttributeValue{
 			":emailVal": &types.AttributeValueMemberS{Value: email},
@@ -124,16 +129,29 @@ func (db *DynamoDbEmailConfirmator) ListTokensEmail(ctx context.Context, email s
 	return tokenRecords, nil
 }
 func (db *DynamoDbEmailConfirmator) FindTokenRecord(ctx context.Context, token string) (*EmailConfirmationRecord, error) {
-	input := &dynamodb.QueryInput{
-		TableName:              aws.String("email_confirmation_tokens"),
-		KeyConditionExpression: aws.String("token = :tokenVal"),
-		ExpressionAttributeValues: map[string]types.AttributeValue{
-			":tokenVal": &types.AttributeValueMemberS{Value: token},
-		},
-		Limit: aws.Int32(1),
+	filtEx := expression.Name("token").Equal(expression.Value(token))
+	projEx := expression.NamesList(
+		expression.Name("email"),
+		expression.Name("token"),
+		expression.Name("expires_at"),
+	)
+
+	expr, err := expression.NewBuilder().
+		WithFilter(filtEx).
+		WithProjection(projEx).
+		Build()
+	if err != nil {
+		return nil, fmt.Errorf("failed to build find token record query: %v", err)
 	}
 
-	result, err := db.cl.Query(ctx, input)
+	input := &dynamodb.ScanInput{
+		ExpressionAttributeNames:  expr.Names(),
+		ExpressionAttributeValues: expr.Values(),
+		TableName:                 aws.String(TableEmailConfirmationTokens),
+		FilterExpression:          expr.Filter(),
+		ProjectionExpression:      expr.Projection(),
+	}
+	result, err := db.cl.Scan(ctx, input)
 	if err != nil {
 		return nil, err
 	}

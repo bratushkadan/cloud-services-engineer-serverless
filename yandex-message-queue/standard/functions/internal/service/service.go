@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"fns/reg/internal/confirmer"
+	"fns/reg/internal/emconfmq"
 	"fns/reg/internal/ydynamo"
 	"fns/reg/pkg/conf"
 	"fns/reg/pkg/entity"
+	"fns/reg/pkg/ymq"
 	"time"
 
 	"go.uber.org/zap"
@@ -15,6 +17,7 @@ import (
 
 var (
 	ErrInvalidConfirmationToken = errors.New("invalid confirmation token")
+	ErrConfirmationTokenExpired = errors.New("confirmation token expired")
 )
 
 type EmailConfirmationAppConf struct {
@@ -27,6 +30,8 @@ type EmailConfirmationAppConf struct {
 	SenderEmail          string
 	SenderPassword       string
 	EmailConfirmationUrl string
+
+	emailConfirmationSendTimeout time.Duration
 }
 
 func NewEmailConfirmationAppConf() *EmailConfirmationAppConf {
@@ -49,6 +54,9 @@ func (c *EmailConfirmationAppConf) LoadEnv() *EmailConfirmationAppConf {
 	c.SenderEmail = conf.MustEnv("SENDER_EMAIL")
 	c.SenderPassword = conf.MustEnv("SENDER_PASSWORD")
 	c.EmailConfirmationUrl = conf.MustEnv("EMAIL_CONFIRMATION_URL")
+
+	c.emailConfirmationSendTimeout = 5 * time.Second
+
 	return c
 }
 
@@ -58,9 +66,10 @@ type EmailConfirmer interface {
 }
 
 type EmailConfirmation struct {
-	l    *zap.Logger
-	repo *ydynamo.DynamoDbEmailConfirmator
-	// sqs *
+	conf      EmailConfirmationAppConf
+	l         *zap.Logger
+	repo      *ydynamo.DynamoDbEmailConfirmator
+	sqs       *emconfmq.EmailConfirmationMq
 	confirmer *confirmer.EmailConfirmationLinkSender
 }
 
@@ -73,10 +82,20 @@ func NewEmailConfirmation(conf *EmailConfirmationAppConf, logger *zap.Logger) (*
 		return nil, fmt.Errorf("failed to setup dynamodb: %v", err)
 	}
 
+	var sqs *emconfmq.EmailConfirmationMq
+	if conf.withSqs {
+		ymq, err := ymq.New(ctx, conf.AwsAccessKeyId, conf.AwsSecretAccessKey, conf.SqsEndpoint, logger)
+		if err != nil {
+			return nil, fmt.Errorf("failed to setup ymq for email confirmation message queue: %v", err)
+		}
+		sqs = emconfmq.New(ymq, logger)
+	}
+
 	return &EmailConfirmation{
 		l:         logger,
 		repo:      repo,
 		confirmer: confirmer,
+		sqs:       sqs,
 	}, nil
 }
 
@@ -92,8 +111,15 @@ func (c *EmailConfirmation) Confirm(ctx context.Context, token string) error {
 		return ErrInvalidConfirmationToken
 	}
 	c.l.Info("retrieved confirmation token record", zap.String("email", record.Email))
+	if time.Now().After(record.ExpiresAt) {
+		return ErrConfirmationTokenExpired
+	}
+	c.l.Info("validated confirmation token record", zap.String("email", record.Email))
 
-	// FIXME: produce message here
+	if err := c.sqs.PublishConfirmation(ctx, emconfmq.EmailConfirmationDTO{Email: record.Email}); err != nil {
+		return fmt.Errorf("failed to produce confirmation message: %v", err)
+	}
+	c.l.Info("produced confirmation message", zap.String("email", record.Email))
 
 	c.l.Info("confirmed email", zap.String("email", record.Email))
 	return nil
@@ -108,6 +134,8 @@ func (c *EmailConfirmation) Send(ctx context.Context, email string) error {
 	}
 	c.l.Info("inserted confirmation token", zap.String("email", email))
 
+	ctx, cancel := context.WithTimeout(ctx, c.conf.emailConfirmationSendTimeout)
+	defer cancel()
 	if err := c.confirmer.Send(ctx, email, tokenString); err != nil {
 		return fmt.Errorf("failed to send confirmation email: %v", err)
 	}
