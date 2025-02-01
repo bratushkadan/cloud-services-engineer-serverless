@@ -24,11 +24,16 @@ export YDB_DATABASE_ID=""
 export YDB_DOC_API_ENDPOINT=$(yc ydb database get "${YDB_DATABASE_ID}" | yq .document_api_endpoint)
 ```
 
-Create SA, grant it `ydb.editor` role and create static key.
+Create SA (name `test-cloud-functions-sa` in my case), grant it `ydb.editor` role and create static key.
+
+Secret name is `test-cloud-functions-sa-static-key`
+
 
 ```bash
-export AWS_ACCESS_KEY_ID=$(jq -Mr '.access_key.key_id' access-key.json)
-export AWS_SECRET_ACCESS_KEY=$(jq -Mr '.secret' access-key.json)
+YDB_WRITER_SECRET_NAME=test-cloud-functions-sa-static-key
+SECRET=$(yc lockbox payload get "${YDB_WRITER_SECRET_NAME}")
+export AWS_ACCESS_KEY_ID=$(echo $SECRET | yq -M '.entries.[] | select(.key == "aws_access_key_id").text_value')
+export AWS_SECRET_ACCESS_KEY=$(echo $SECRET | yq -M '.entries.[] | select(.key == "aws_secret_access_key").text_value')
 export AWS_DEFAULT_REGION=ru-central1
 ```
 
@@ -46,6 +51,21 @@ aws dynamodb create-table \
   --key-schema \
     AttributeName=email,KeyType=HASH \
     AttributeName=token,KeyType=RANGE \
+  --global-secondary-indexes "[
+    {
+      \"IndexName\": \"TokenIndex\",
+      \"KeySchema\": [
+        {\"AttributeName\": \"token\",\"KeyType\": \"HASH\"}
+      ],
+      \"Projection\": {
+        \"ProjectionType\": \"ALL\"
+      },
+      \"ProvisionedThroughput\": {
+        \"ReadCapacityUnits\": 5,
+        \"WriteCapacityUnits\": 5
+      }
+    }
+  ]" \
   --endpoint "$YDB_DOC_API_ENDPOINT"
 aws dynamodb update-time-to-live \
     --table-name "${TABLE_CONF_TOKENS_NAME}"  \
@@ -99,6 +119,10 @@ export SQS_QUEUE_NAME="email-confirmations"
 aws sqs create-queue \
   --queue-name "${SQS_QUEUE_NAME}" \
   --endpoint "https://message-queue.api.cloud.yandex.net/"
+export SQS_ENDPOINT="$(aws sqs get-queue-url \
+  --queue-name "${SQS_QUEUE_NAME}" \
+  --endpoint "https://message-queue.api.cloud.yandex.net/" \
+  | jq -cMr .QueueUrl)"
 ```
 
 ### Create YMQ writer/reader service account
@@ -117,5 +141,3 @@ yc resource-manager folder add-access-binding \
   --role "ymq.writer" \
   --subject "serviceAccount:${YMQ_USER_SA_ID}"
 ```
-
-
