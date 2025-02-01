@@ -2,40 +2,78 @@
 
 ## Roadmap
 
-- [ ] Setup YMQ
+- [x] Setup YMQ
 - [x] Implement Email Confirmation Sender
-- [ ] Add YMQ publishing to the Email Confirmation Sender
-- [ ] Implement Email Confirmer
-- [ ] Implement Confirm User Account (possibly a mock service that just reads the value from the YMQ)
+- [x] Add YMQ publishing to the Email Confirmation Sender
+- [x] Implement Email Confirmer
+- [x] Implement Confirm User Account (possibly a mock service that just reads the value from the YMQ)
 - [ ] Setup API Gateway
 - [ ] Deploy & test the integrations
+- [ ] Move setup to Terraform
 
-## YDB
+# New workflow with Terraform + yc/aws CLI
 
-Get serverless YDB
+## Setup
 
-```bash
-yc ydb database list
+1\. First step is to generate Yandex Message Queue (SQS) aws keys:
+```sh
+./tf apply -target yandex_iam_service_account_static_access_key.ydb_ymq_manager_sa
 ```
 
-Get document API endpoint:
-```bash
-export YDB_DATABASE_ID=""
-export YDB_DOC_API_ENDPOINT=$(yc ydb database get "${YDB_DATABASE_ID}" | yq .document_api_endpoint)
+2\. Export the ymq secrets that are required by the [yandex provider](https://terraform-provider.yandexcloud.net/index.html#optional) in order to work with the SQS API using Terraform:
+```sh
+export MANAGER_LOCKBOX_SEC_ID=$(./tf output -json -no-color | jq -cMr .ydb_ymq_manager_static_key_lockbox_secret_id.value)
+export MANAGER_SECRET=$(yc lockbox payload get "${MANAGER_LOCKBOX_SEC_ID}")
+export YC_MESSAGE_QUEUE_ACCESS_KEY=$(echo "${MANAGER_SECRET}" \
+  | yq '.entries | .[] | select(.key == "access_key_id").text_value')
+export YC_MESSAGE_QUEUE_SECRET_KEY=$(echo "${MANAGER_SECRET}" \
+  | yq '.entries | .[] | select(.key == "secret_access_key").text_value')
 ```
 
-Create SA (name `test-cloud-functions-sa` in my case), grant it `ydb.editor` role and create static key.
+4\. You may run `./tf` without `-target`'ing now.
 
-Secret name is `test-cloud-functions-sa-static-key`
+## Setup credentials for application
 
-
-```bash
-YDB_WRITER_SECRET_NAME=test-cloud-functions-sa-static-key
-SECRET=$(yc lockbox payload get "${YDB_WRITER_SECRET_NAME}")
-export AWS_ACCESS_KEY_ID=$(echo $SECRET | yq -M '.entries.[] | select(.key == "aws_access_key_id").text_value')
-export AWS_SECRET_ACCESS_KEY=$(echo $SECRET | yq -M '.entries.[] | select(.key == "aws_secret_access_key").text_value')
+```sh
+TF_OUTPUT=$(./terraform/tf output -json -no-color)
+export YDB_DOC_API_ENDPOINT=$(echo $TF_OUTPUT | jq -cMr .ydb.value.document_api_endpoint)
+export SQS_ENDPOINT=$(echo $TF_OUTPUT | jq -cMr .ymq.value.queues.email_confirmation.url)
+APP_SA_STATIC_KEY_SECRET_ID="$(echo $TF_OUTPUT | jq -cMr .app_sa.value.static_key_lockbox_secret_id)"
+SECRET=$(yc lockbox payload get "${APP_SA_STATIC_KEY_SECRET_ID}")
+export AWS_ACCESS_KEY_ID=$(echo $SECRET | yq -M '.entries.[] | select(.key == "access_key_id").text_value')
+export AWS_SECRET_ACCESS_KEY=$(echo $SECRET | yq -M '.entries.[] | select(.key == "secret_access_key").text_value')
 export AWS_DEFAULT_REGION=ru-central1
 ```
+
+## Setup additional credentials for application
+
+```sh
+export SENDER_EMAIL="<email>"
+export SENDER_PASSWORD="<password>"
+export EMAIL_CONFIRMATION_URL="foo.bar"
+```
+
+## Test app
+
+1\. Send confirmation email:
+```sh
+go run cmd/email-confirmation-sender/email_confirmation_sender.go
+```
+
+Copy the confirmation token that was sent to the email.
+Change the `./cmd/email-confirmation/email_confirmation.go`'s value with the token.
+
+2\. Run email confirmation:
+```sh
+go run cmd/email-confirmation/email_confirmation.go
+```
+
+3\. Read messages about the confirmation from queue (mock service that adds "confirmed" records to user accounts by reading messages from confirmation component):
+```sh
+go run ./cmd/q-reader/main.go
+```
+
+## Bootstrap YDB
 
 ### Create `email_confirmation_tokens` database
 
@@ -71,73 +109,4 @@ aws dynamodb update-time-to-live \
     --table-name "${TABLE_CONF_TOKENS_NAME}"  \
     --time-to-live-specification "Enabled=true, AttributeName=expires_at" \
   --endpoint "$YDB_DOC_API_ENDPOINT"
-```
-
-## Create YMQ
-
-Create sa:
-```bash
-export YMQ_MANAGER_SA_NAME=ymq-manager
-export YMQ_MANAGER_SA_ID=$(yc iam service-account create \
-  --name "${YMQ_MANAGER_SA_NAME}" \
-  --description "Yandex Message Queue managemet service account" \
-  | yq -M .id
-)
-```
-
-Grant role:
-```bash
-export FOLDER_ID=$(yc config get folder-id)
-yc resource-manager folder add-access-binding \
-  --id "${FOLDER_ID}" \
-  --role "ymq.admin" \
-  --subject "serviceAccount:${YMQ_MANAGER_SA_ID}"
-```
-
-Add access key for the management service account, create lockbox secret & version:
-```bash
-export YMQ_MANAGER_STATIC_KEY_LOCKBOX_SECRET_NAME="ymq-manager-static-key"
-STATIC_KEY=$(yc iam access-key create --service-account-id "${YMQ_MANAGER_SA_ID}" --format json)
-SECRET_PAYLOAD=$(bash -c "export AWS_ACCESS_KEY_ID=$(echo "${STATIC_KEY}" | jq -cMr .access_key.key_id); export AWS_SECRET_ACCESS_KEY=$(echo "${STATIC_KEY}" | jq -cMr .secret); cat ymq-lockbox-sa-static-key.tpl.yaml | envsubst")
-yc lockbox secret create \
-  --name "${YMQ_MANAGER_STATIC_KEY_LOCKBOX_SECRET_NAME}" \
-  --description "Yandex Message Queue manager service account's static access key $(echo "${STATIC_KEY}" | jq .access_key.id)" \
-  --payload "${SECRET_PAYLOAD}"
-export YMQ_MANAGER_STATIC_KEY_LOCKBOX_SECRET_ID=$(yc lockbox secret get --name "${YMQ_MANAGER_STATIC_KEY_LOCKBOX_SECRET_NAME}" | yq -M .id)
-```
-
-Get secret payload for the management service account:
-```bash
-SECRET=$(yc lockbox payload get "${YMQ_MANAGER_STATIC_KEY_LOCKBOX_SECRET_ID}")
-export AWS_ACCESS_KEY_ID=$(echo $SECRET | yq -M '.entries.[] | select(.key == "aws_access_key_id").text_value')
-export AWS_SECRET_ACCESS_KEY=$(echo $SECRET | yq -M '.entries.[] | select(.key == "aws_secret_access_key").text_value')
-```
-
-Create queue via the management service account:
-```bash
-export SQS_QUEUE_NAME="email-confirmations"
-aws sqs create-queue \
-  --queue-name "${SQS_QUEUE_NAME}" \
-  --endpoint "https://message-queue.api.cloud.yandex.net/"
-export SQS_ENDPOINT="$(aws sqs get-queue-url \
-  --queue-name "${SQS_QUEUE_NAME}" \
-  --endpoint "https://message-queue.api.cloud.yandex.net/" \
-  | jq -cMr .QueueUrl)"
-```
-
-### Create YMQ writer/reader service account
-```bash
-export YMQ_USER_SA_ID=aj***h
-```
-
-Grant it role for writing to queue:
-```bash
-yc resource-manager folder add-access-binding \
-  --id "${FOLDER_ID}" \
-  --role "ymq.reader" \
-  --subject "serviceAccount:${YMQ_USER_SA_ID}"
-yc resource-manager folder add-access-binding \
-  --id "${FOLDER_ID}" \
-  --role "ymq.writer" \
-  --subject "serviceAccount:${YMQ_USER_SA_ID}"
 ```
