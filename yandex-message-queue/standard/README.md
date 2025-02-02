@@ -57,7 +57,7 @@ export EMAIL_CONFIRMATION_URL="foo.bar"
 
 1\. Send confirmation email:
 ```sh
-go run cmd/email-confirmation-sender/email_confirmation_sender.go
+go run cmd/email-confirmation-sender/main.go
 ```
 
 Copy the confirmation token that was sent to the email.
@@ -65,7 +65,7 @@ Change the `./cmd/email-confirmation/email_confirmation.go`'s value with the tok
 
 2\. Run email confirmation:
 ```sh
-go run cmd/email-confirmation/email_confirmation.go
+go run cmd/email-confirmation/main.go
 ```
 
 3\. Read messages about the confirmation from queue (mock service that adds "confirmed" records to user accounts by reading messages from confirmation component):

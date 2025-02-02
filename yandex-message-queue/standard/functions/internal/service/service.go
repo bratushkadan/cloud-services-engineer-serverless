@@ -20,12 +20,14 @@ var (
 	ErrConfirmationTokenExpired = errors.New("confirmation token expired")
 )
 
-type EmailConfirmationAppConf struct {
-	YdbDocApiEndpoint  string
-	SqsEndpoint        string
-	withSqs            bool
-	AwsAccessKeyId     string
-	AwsSecretAccessKey string
+type Conf struct {
+	YdbDocApiEndpoint        string
+	SqsEndpoint              string
+	withSqs                  bool
+	DocYdbAwsAccessKeyId     string
+	DocYdbAwsSecretAccessKey string
+	SqsAwsAccessKeyId        string
+	SqsAwsSecretAccessKey    string
 
 	SenderEmail          string
 	SenderPassword       string
@@ -34,29 +36,35 @@ type EmailConfirmationAppConf struct {
 	emailConfirmationSendTimeout time.Duration
 }
 
-func NewEmailConfirmationAppConf() *EmailConfirmationAppConf {
-	return &EmailConfirmationAppConf{}
-}
+func NewConf() *Conf {
+	c := &Conf{}
+	c.emailConfirmationSendTimeout = 5 * time.Second
 
-func (c *EmailConfirmationAppConf) WithSqs() *EmailConfirmationAppConf {
-	c.withSqs = true
 	return c
 }
 
-func (c *EmailConfirmationAppConf) LoadEnv() *EmailConfirmationAppConf {
+func (c *Conf) WithDocYdb() *Conf {
+	c.DocYdbAwsAccessKeyId = conf.MustEnv("AWS_ACCESS_KEY_ID")
+	c.DocYdbAwsSecretAccessKey = conf.MustEnv("AWS_SECRET_ACCESS_KEY")
 	c.YdbDocApiEndpoint = conf.MustEnv("YDB_DOC_API_ENDPOINT")
-	if c.withSqs {
-		c.SqsEndpoint = conf.MustEnv("SQS_ENDPOINT")
-	}
-	c.AwsAccessKeyId = conf.MustEnv("AWS_ACCESS_KEY_ID")
-	c.AwsSecretAccessKey = conf.MustEnv("AWS_SECRET_ACCESS_KEY")
+	return c
+}
 
+func (c *Conf) WithSqs() *Conf {
+	c.SqsAwsAccessKeyId = conf.MustEnv("AWS_ACCESS_KEY_ID")
+	c.SqsAwsSecretAccessKey = conf.MustEnv("AWS_SECRET_ACCESS_KEY")
+	c.SqsEndpoint = conf.MustEnv("SQS_ENDPOINT")
+	return c
+}
+
+func (c *Conf) WithEmail() *Conf {
 	c.SenderEmail = conf.MustEnv("SENDER_EMAIL")
 	c.SenderPassword = conf.MustEnv("SENDER_PASSWORD")
 	c.EmailConfirmationUrl = conf.MustEnv("EMAIL_CONFIRMATION_URL")
+	return c
+}
 
-	c.emailConfirmationSendTimeout = 5 * time.Second
-
+func (c *Conf) Build() *Conf {
 	return c
 }
 
@@ -66,37 +74,76 @@ type EmailConfirmer interface {
 }
 
 type EmailConfirmation struct {
-	conf      EmailConfirmationAppConf
-	l         *zap.Logger
-	repo      *ydynamo.DynamoDbEmailConfirmator
-	sqs       *emconfmq.EmailConfirmationMq
-	confirmer *confirmer.EmailConfirmationLinkSender
+	conf           *Conf
+	l              *zap.Logger
+	repo           *ydynamo.EmailConfirmator
+	mq             *emconfmq.EmailConfirmationMq
+	emailConfirmer *confirmer.Email
 }
 
-func NewEmailConfirmation(conf *EmailConfirmationAppConf, logger *zap.Logger) (*EmailConfirmation, error) {
-	confirmer := confirmer.NewEmailConfirmationLinkSender(conf.SenderEmail, conf.SenderPassword, conf.EmailConfirmationUrl)
-	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
-	defer cancel()
-	repo, err := ydynamo.NewDynamoDbEmailConfirmator(ctx, conf.AwsAccessKeyId, conf.AwsSecretAccessKey, conf.YdbDocApiEndpoint, logger)
-	if err != nil {
-		return nil, fmt.Errorf("failed to setup dynamodb: %v", err)
-	}
+type EmailConfirmationOption func(context.Context, *EmailConfirmation) error
 
-	var sqs *emconfmq.EmailConfirmationMq
-	if conf.withSqs {
-		ymq, err := ymq.New(ctx, conf.AwsAccessKeyId, conf.AwsSecretAccessKey, conf.SqsEndpoint, logger)
+func WithLogger(logger *zap.Logger) EmailConfirmationOption {
+	return func(_ context.Context, c *EmailConfirmation) error {
+		c.l = logger
+		return nil
+	}
+}
+func WithEmailer() EmailConfirmationOption {
+	return func(_ context.Context, c *EmailConfirmation) error {
+		c.emailConfirmer = confirmer.NewEmail(
+			c.conf.SenderEmail,
+			c.conf.SenderPassword,
+			c.conf.EmailConfirmationUrl,
+		)
+		return nil
+	}
+}
+func WithDynamoDb() EmailConfirmationOption {
+	return func(ctx context.Context, c *EmailConfirmation) error {
+		db, err := ydynamo.NewDynamoDbEmailConfirmator(
+			ctx,
+			c.conf.DocYdbAwsAccessKeyId,
+			c.conf.DocYdbAwsSecretAccessKey,
+			c.conf.YdbDocApiEndpoint,
+			c.l,
+		)
 		if err != nil {
-			return nil, fmt.Errorf("failed to setup ymq for email confirmation message queue: %v", err)
+			return fmt.Errorf("failed to setup dynamodb client: %v", err)
 		}
-		sqs = emconfmq.New(ymq, logger)
+
+		c.repo = db
+		return nil
+	}
+}
+func WithYmq() EmailConfirmationOption {
+	return func(ctx context.Context, c *EmailConfirmation) error {
+		ymq, err := ymq.New(
+			ctx,
+			c.conf.SqsAwsAccessKeyId,
+			c.conf.SqsAwsSecretAccessKey,
+			c.conf.SqsEndpoint,
+			c.l,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to setup sqs for email confirmaiton: %v", err)
+		}
+
+		c.mq = emconfmq.New(ymq, c.l)
+		return nil
+	}
+}
+
+func New(ctx context.Context, conf *Conf, opts ...EmailConfirmationOption) (*EmailConfirmation, error) {
+	emailConfirmation := &EmailConfirmation{conf: conf}
+
+	for _, applyOpt := range opts {
+		if err := applyOpt(ctx, emailConfirmation); err != nil {
+			return nil, fmt.Errorf("failed to apply option to email confirmation service: %v", err)
+		}
 	}
 
-	return &EmailConfirmation{
-		l:         logger,
-		repo:      repo,
-		confirmer: confirmer,
-		sqs:       sqs,
-	}, nil
+	return emailConfirmation, nil
 }
 
 func (c *EmailConfirmation) Confirm(ctx context.Context, token string) error {
@@ -116,7 +163,7 @@ func (c *EmailConfirmation) Confirm(ctx context.Context, token string) error {
 	}
 	c.l.Info("validated confirmation token record", zap.String("email", record.Email))
 
-	if err := c.sqs.PublishConfirmation(ctx, emconfmq.EmailConfirmationDTO{Email: record.Email}); err != nil {
+	if err := c.mq.PublishConfirmation(ctx, emconfmq.EmailConfirmationDTO{Email: record.Email}); err != nil {
 		return fmt.Errorf("failed to produce confirmation message: %v", err)
 	}
 	c.l.Info("produced confirmation message", zap.String("email", record.Email))
@@ -136,7 +183,7 @@ func (c *EmailConfirmation) Send(ctx context.Context, email string) error {
 
 	ctx, cancel := context.WithTimeout(ctx, c.conf.emailConfirmationSendTimeout)
 	defer cancel()
-	if err := c.confirmer.Send(ctx, email, tokenString); err != nil {
+	if err := c.emailConfirmer.Send(ctx, email, tokenString); err != nil {
 		return fmt.Errorf("failed to send confirmation email: %v", err)
 	}
 	c.l.Info("sent confirmation email")

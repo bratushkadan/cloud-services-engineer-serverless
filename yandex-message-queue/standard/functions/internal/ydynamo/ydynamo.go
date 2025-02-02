@@ -28,15 +28,15 @@ type EmailConfirmationRecord struct {
 	ExpiresAt time.Time `dynamodbav:"expires_at" json:"expires_at"`
 }
 
-type EmailConfirmationTokenRepo interface {
+type EmailConfirmatorTokenRepo interface {
 	InsertToken(ctx context.Context, email, token string) error
 	ListTokensEmail(context context.Context, email string) ([]EmailConfirmationRecord, error)
 	FindTokenRecord(context context.Context, token string) (*EmailConfirmationRecord, error)
 }
 
-var _ EmailConfirmationTokenRepo = (*DynamoDbEmailConfirmator)(nil)
+var _ EmailConfirmatorTokenRepo = (*EmailConfirmator)(nil)
 
-type DynamoDbEmailConfirmator struct {
+type EmailConfirmator struct {
 	cl *dynamodb.Client
 	l  *zap.Logger
 }
@@ -62,7 +62,7 @@ func newYdbDocApiEndpointResolver(endpoint string) *ydbDocApiEndpointResolver {
 	}
 }
 
-func NewDynamoDbEmailConfirmator(ctx context.Context, accessKeyId, secretAccessKey string, ydbDocApiEndpoint string, logger *zap.Logger) (*DynamoDbEmailConfirmator, error) {
+func NewDynamoDbEmailConfirmator(ctx context.Context, accessKeyId, secretAccessKey string, ydbDocApiEndpoint string, logger *zap.Logger) (*EmailConfirmator, error) {
 	cfg, err := config.LoadDefaultConfig(
 		ctx,
 		config.WithRegion("ru-central1"),
@@ -76,10 +76,10 @@ func NewDynamoDbEmailConfirmator(ctx context.Context, accessKeyId, secretAccessK
 		newYdbDocApiEndpointResolver(ydbDocApiEndpoint),
 	))
 
-	return &DynamoDbEmailConfirmator{cl: client, l: logger}, nil
+	return &EmailConfirmator{cl: client, l: logger}, nil
 }
 
-func (db *DynamoDbEmailConfirmator) InsertToken(ctx context.Context, email, token string) error {
+func (db *EmailConfirmator) InsertToken(ctx context.Context, email, token string) error {
 	item := &dynamodb.PutItemInput{
 		TableName: aws.String(TableEmailConfirmationTokens),
 		Item: map[string]types.AttributeValue{
@@ -103,7 +103,7 @@ func (db *DynamoDbEmailConfirmator) InsertToken(ctx context.Context, email, toke
 	return nil
 }
 
-func (db *DynamoDbEmailConfirmator) ListTokensEmail(ctx context.Context, email string) ([]EmailConfirmationRecord, error) {
+func (db *EmailConfirmator) ListTokensEmail(ctx context.Context, email string) ([]EmailConfirmationRecord, error) {
 	input := &dynamodb.QueryInput{
 		TableName:              aws.String(TableEmailConfirmationTokens),
 		KeyConditionExpression: aws.String("email = :emailVal"),
@@ -128,7 +128,7 @@ func (db *DynamoDbEmailConfirmator) ListTokensEmail(ctx context.Context, email s
 
 	return tokenRecords, nil
 }
-func (db *DynamoDbEmailConfirmator) FindTokenRecord(ctx context.Context, token string) (*EmailConfirmationRecord, error) {
+func (db *EmailConfirmator) FindTokenRecord(ctx context.Context, token string) (*EmailConfirmationRecord, error) {
 	filtEx := expression.Name("token").Equal(expression.Value(token))
 	projEx := expression.NamesList(
 		expression.Name("email"),
