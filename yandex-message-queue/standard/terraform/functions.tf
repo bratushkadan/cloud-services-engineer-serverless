@@ -7,7 +7,7 @@ locals {
 
   functions_versions_raw = {
     send_confirmation_email = "0.1.0"
-    test_ydb                = "0.0.2-rc02.02.2025"
+    test_ydb                = "0.0.2"
   }
 
   functions = {
@@ -22,9 +22,6 @@ locals {
       zip_path               = "${local.build_dir}/test-ydb-v${local.functions_versions_raw.test_ydb}.zip"
     }
   }
-}
-output "fns" {
-  value = local.fns
 }
 
 
@@ -76,49 +73,29 @@ locals {
   }
 }
 
-resource "null_resource" "pack_code_send_confirmation_email" {
-  provisioner "local-exec" {
-    command = file("${path.module}/scripts/prepare-go-function.sh")
-
-    environment = {
-      TARGET_SOURCE_CODE_DIR = local.functions.send_confirmation_email.target_source_code_dir
-      SOURCE_CODE_DIR        = local.fns_source_code_dir
-    }
-  }
-  triggers = {
-    run_on_version_update = local.functions.send_confirmation_email.version
-    // always_run            = timestamp()
-  }
-}
-
-
-resource "null_resource" "pack_function_code" {
+# Recreate source code dir each time Terraform is run
+data "shell_script" "user" {
   for_each = local.functions
 
-  provisioner "local-exec" {
-    command = file("${path.module}/scripts/prepare-go-function.sh")
-
-    environment = {
-      TARGET_SOURCE_CODE_DIR = each.value.target_source_code_dir
-      SOURCE_CODE_DIR        = local.fns_source_code_dir
-    }
+  lifecycle_commands {
+    read = file("${path.module}/scripts/shell-script-prepare-go-function.sh")
   }
-  triggers = {
-    run_on_version_update = each.value.version
-    // always_run            = timestamp()
+
+  environment = {
+    TARGET_SOURCE_CODE_DIR = each.value.target_source_code_dir
+    SOURCE_CODE_DIR        = local.fns_source_code_dir
+    FN_NAME                = each.key
+    FN_VER                 = each.value.version
   }
 }
 
 resource "archive_file" "functions" {
   for_each = local.functions
 
-  source_dir  = each.value.target_source_code_dir
-  output_path = each.value.zip_path
+  source_dir  = data.shell_script.user[each.key].output["source_dir"]
+  output_path = data.shell_script.user[each.key].output["zip_path"]
   type        = "zip"
-
-  depends_on = [null_resource.pack_function_code]
 }
-
 
 resource "yandex_iam_service_account" "cloud_functions_manager" {
   name        = "cloud-functions-manager"

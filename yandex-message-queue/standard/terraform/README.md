@@ -6,13 +6,7 @@ Run Terraform from this directory. `shell`-provider scripts depend on this pathi
 
 ## Cloud function code release / update logic
 
-Including version into the zip-archive name seemingly fixes the problem (by activating both the deps update script & forcing new outputs from the `archive_file` resource, so there's no need for 2 separate `./tf apply` commands).
+Code changes cause source code zip archive file hashsum to change, thus Terraform apply triggers `yandex_function` resource's `user_hash` value update.
 
-**TODO: check if excluding all the source code from the repository allows for correct Terraform commands running without getting an error.**
+This is an expected (desired) behavior that indicates there's changes in source code and new cloud function version may not have the same version tag, i.e. version needs to be bumped before release.
 
-If source code is changed -> Terraform ignores the changes.
-
-If `local.functions` function version is bumped (and source code is changed, otherwise it often does not really make any sense):
-1. Terraform `null_resource` copies the updated source code into the build directory;
-2. Terraform `archive_file` resource compresses the code and computes base64sha256 for the archive;
-3. `yandex_function` resource is updated with the new `user_hash` and `version` tag.
