@@ -7,9 +7,14 @@
 - [x] Add YMQ publishing to the Email Confirmation Sender
 - [x] Implement Email Confirmer
 - [x] Implement Confirm User Account (possibly a mock service that just reads the value from the YMQ)
-- [ ] Setup API Gateway
+- [x] Setup API Gateway
 - [x] Deploy & test the integrations
 - [x] Move setup to Terraform
+- [x] Implement Advanced Terraform Code Packing
+- [x] Learn how IAM authorization works for Cloud Function & Serverless ecosystem
+- [ ] Deploy Email Confirmation Cloud Function
+- [ ] Learn if I can get API Gateway Host header via confirmation link sender function in order to break circular dependency "API Gateway (endpoint) <--> Cloud Function (id)"
+- [ ] Add Rate Limiting to API Gateway
 
 # New workflow with Terraform + yc/aws CLI
 
