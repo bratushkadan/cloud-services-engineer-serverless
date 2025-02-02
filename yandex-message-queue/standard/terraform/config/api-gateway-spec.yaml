@@ -1,0 +1,29 @@
+openapi: 3.0.0
+info:
+  version: 1.0.0
+  title: Floral Auth API
+
+# x-yc-apigateway:
+#   variables:
+#     installation:
+#       default: prod
+#       enum:
+#         - prod
+#         - dev
+
+paths:
+  /test-ydb:
+    get:
+      x-yc-apigateway-integration:
+        type: cloud-functions
+        function_id: "${functions.test_ydb.function_id}"
+        tag: "${functions.test_ydb.version_tag}"
+        service_account_id: "${functions.test_ydb.sa_id}"
+  /auth:send-confirmation-email:
+    post:
+      x-yc-apigateway-integration:
+        type: cloud-functions
+        function_id: "${functions.send_confirmation_email.function_id}"
+        tag: "${functions.send_confirmation_email.version_tag}"
+        service_account_id: "${functions.send_confirmation_email.sa_id}"
+

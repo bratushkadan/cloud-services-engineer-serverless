@@ -38,7 +38,6 @@ func init() {
 	conf := service.NewConf().
 		WithEmail().
 		WithDocYdb().
-		WithSqs().
 		Build()
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
@@ -48,7 +47,6 @@ func init() {
 		service.WithLogger(logger),
 		service.WithEmailer(),
 		service.WithDynamoDb(),
-		service.WithYmq(),
 	)
 	if err != nil {
 		logger.Fatal(err.Error())

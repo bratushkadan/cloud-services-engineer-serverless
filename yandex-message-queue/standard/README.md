@@ -8,12 +8,28 @@
 - [x] Implement Email Confirmer
 - [x] Implement Confirm User Account (possibly a mock service that just reads the value from the YMQ)
 - [ ] Setup API Gateway
-- [ ] Deploy & test the integrations
-- [ ] Move setup to Terraform
+- [x] Deploy & test the integrations
+- [x] Move setup to Terraform
 
 # New workflow with Terraform + yc/aws CLI
 
 ## Setup
+
+### The very initial setup
+
+Create Lockbox secret to send emails with the following fields:
+- `email` (sender);
+- `password`.
+
+Paste it's id to `data.yandex_lockbox_secret.email_provider` Terraform resource:
+
+```terraform
+data "yandex_lockbox_secret" "email_provider" {
+  secret_id = ""
+}
+```
+
+### Terraform
 
 1\. First step is to generate Yandex Message Queue (SQS) aws keys:
 ```sh
@@ -43,13 +59,10 @@ SECRET=$(yc lockbox payload get "${APP_SA_STATIC_KEY_SECRET_ID}")
 export AWS_ACCESS_KEY_ID=$(echo $SECRET | yq -M '.entries.[] | select(.key == "access_key_id").text_value')
 export AWS_SECRET_ACCESS_KEY=$(echo $SECRET | yq -M '.entries.[] | select(.key == "secret_access_key").text_value')
 export AWS_DEFAULT_REGION=ru-central1
-```
+EMAIL_SECRET=$(yc lockbox payload get yandex-mail-provider)
+export SENDER_EMAIL="$(echo $EMAIL_SECRET | yq -M '.entries.[] | select(.key == "email").text_value')"
+export SENDER_PASSWORD="$(echo $EMAIL_SECRET | yq -M '.entries.[] | select(.key == "password").text_value')"
 
-## Setup additional credentials for application
-
-```sh
-export SENDER_EMAIL="<email>"
-export SENDER_PASSWORD="<password>"
 export EMAIL_CONFIRMATION_URL="foo.bar"
 ```
 
