@@ -84,6 +84,10 @@ func (s *Adapter) HandleSendConfirmation(w http.ResponseWriter, r *http.Request)
 	}
 
 	ctx := r.Context()
+	if r.Host != "" {
+		ctx = service.ContextWithEmailConfirmationHost(ctx, r.Host)
+	}
+
 	if err := s.emailConfirmer.Send(ctx, b.Email); err != nil {
 		s.l.Error("failed to send confirmation email", zap.Error(err), zap.String("email", b.Email))
 		w.WriteHeader(http.StatusInternalServerError)

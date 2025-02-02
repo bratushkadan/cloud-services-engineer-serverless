@@ -8,6 +8,11 @@ resource "yandex_iam_service_account" "app" {
   description = "serverless ymq type standard practicum course tests application sa"
 }
 
+resource "yandex_iam_service_account" "auth_caller" {
+  name        = "${local.common_name}-auth-functions-caller"
+  description = "serverless ymq type standard practicum course tests auth functions caller sa"
+}
+
 resource "yandex_resourcemanager_folder_iam_member" "app_ydb_writer" {
   folder_id = local.folder_id
 
@@ -32,14 +37,6 @@ resource "yandex_resourcemanager_folder_iam_member" "app_serverless_mdb_user" {
   role   = "serverless.mdbProxies.user"
   member = "serviceAccount:${yandex_iam_service_account.app.id}"
 }
-// TODO: move this role to separate SA and assign this role to specific functions instead of whole folder
-// this SA is designed for API Gateway only.
-# resource "yandex_resourcemanager_folder_iam_member" "app_function_invoker" {
-#   folder_id = local.folder_id
-# 
-#   role   = "functions.functionInvoker"
-#   member = "serviceAccount:${yandex_iam_service_account.app.id}"
-# }
 
 resource "yandex_lockbox_secret" "app_sa_static_key" {
   name        = "${local.common_name}-app-sa-static-key-secret"

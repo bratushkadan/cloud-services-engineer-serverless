@@ -1,16 +1,19 @@
 locals {
+  auth_email_confirmation_api_endpoint = "/auth:confirm-email"
+
   api_gateway = {
     spec_options = {
+      auth_email_confirmation_api_endpoint = local.auth_email_confirmation_api_endpoint
       functions = {
         send_confirmation_email = {
           function_id = yandex_function.send_confirmation_email.id
           version_tag = local.functions.send_confirmation_email.version
-          sa_id       = yandex_iam_service_account.app.id
+          sa_id       = yandex_iam_service_account.auth_caller.id
         }
         test_ydb = {
           function_id = yandex_function.test_ydb.id
           version_tag = local.functions.test_ydb.version
-          sa_id       = yandex_iam_service_account.app.id
+          sa_id       = yandex_iam_service_account.auth_caller.id
         }
       }
     }

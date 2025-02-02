@@ -3,23 +3,21 @@ locals {
   fns_source_code_dir = "${local.project_root}/functions"
   build_dir           = "${local.project_root}/.zip"
 
-  fns = yamldecode(file("${path.module}/../config.yaml"))
-
-  functions_versions_raw = {
+  function_versions = {
     send_confirmation_email = "0.1.0"
-    test_ydb                = "0.0.2"
+    test_ydb                = "0.0.3"
   }
 
   functions = {
     send_confirmation_email = {
-      version                = "v${replace(local.functions_versions_raw.send_confirmation_email, ".", "-")}"
+      version                = "v${replace(local.function_versions.send_confirmation_email, ".", "-")}"
       target_source_code_dir = "${local.build_dir}/send-confirmation-email"
-      zip_path               = "${local.build_dir}/v${local.functions_versions_raw.send_confirmation_email}-send-confirmation-email.zip"
+      zip_path               = "${local.build_dir}/v${local.function_versions.send_confirmation_email}-send-confirmation-email.zip"
     }
     test_ydb = {
-      version                = "v${replace(local.functions_versions_raw.test_ydb, ".", "-")}"
+      version                = "v${replace(local.function_versions.test_ydb, ".", "-")}"
       target_source_code_dir = "${local.build_dir}/test-ydb"
-      zip_path               = "${local.build_dir}/test-ydb-v${local.functions_versions_raw.test_ydb}.zip"
+      zip_path               = "${local.build_dir}/test-ydb-v${local.function_versions.test_ydb}.zip"
     }
   }
 }
@@ -38,7 +36,7 @@ locals {
     "AWS_SECRET_ACCESS_KEY",
     "SENDER_EMAIL",
     "SENDER_PASSWORD",
-    "EMAIL_CONFIRMATION_URL",
+    "EMAIL_CONFIRMATION_API_ENDPOINT",
     "YDB_DOC_API_ENDPOINT",
     "SQS_ENDPOINT",
   ] : v => v })
@@ -127,8 +125,8 @@ resource "yandex_function" "send_confirmation_email" {
   service_account_id = yandex_iam_service_account.cloud_functions_manager.id
 
   environment = {
-    (local.env.YDB_DOC_API_ENDPOINT)   = yandex_ydb_database_serverless.this.document_api_endpoint
-    (local.env.EMAIL_CONFIRMATION_URL) = "foo.bar"
+    (local.env.YDB_DOC_API_ENDPOINT)            = yandex_ydb_database_serverless.this.document_api_endpoint
+    (local.env.EMAIL_CONFIRMATION_API_ENDPOINT) = local.auth_email_confirmation_api_endpoint
   }
 
   dynamic "secrets" {
@@ -192,3 +190,16 @@ resource "yandex_function" "test_ydb" {
 // due to the Cloud Function having need in API Gateway url in order to generate
 // confirmation urls.
 // resource "yandex_function" "confirm_email" {}
+
+resource "yandex_function_iam_binding" "send_confirmation_email_caller" {
+  function_id = yandex_function.send_confirmation_email.id
+  role        = "serverless.functions.invoker"
+
+  members = ["serviceAccount:${yandex_iam_service_account.auth_caller.id}"]
+}
+resource "yandex_function_iam_binding" "test_ydb_caller" {
+  function_id = yandex_function.test_ydb.id
+  role        = "serverless.functions.invoker"
+
+  members = ["serviceAccount:${yandex_iam_service_account.auth_caller.id}"]
+}

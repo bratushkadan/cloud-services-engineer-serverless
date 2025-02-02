@@ -22,6 +22,7 @@ func main() {
 	r := &http.Request{
 		Body: &httpmock.ReadCloser{Reader: strings.NewReader(`{"email": "bratushkadan@gmail.com"}`)},
 	}
+	r.Host = "apigw"
 	Handler(w, r)
 }
 

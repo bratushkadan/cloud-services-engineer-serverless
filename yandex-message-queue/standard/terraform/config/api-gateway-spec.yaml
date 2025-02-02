@@ -19,11 +19,17 @@ paths:
         function_id: "${functions.test_ydb.function_id}"
         tag: "${functions.test_ydb.version_tag}"
         service_account_id: "${functions.test_ydb.sa_id}"
-  /auth:send-confirmation-email:
+  "/auth:send-confirmation-email":
     post:
       x-yc-apigateway-integration:
         type: cloud-functions
         function_id: "${functions.send_confirmation_email.function_id}"
         tag: "${functions.send_confirmation_email.version_tag}"
         service_account_id: "${functions.send_confirmation_email.sa_id}"
-
+  "${auth_email_confirmation_api_endpoint}":
+    get:
+      x-yc-apigateway-integration:
+        type: dummy
+        http_code: 200
+        content:
+          "application/json": "{\"message\": \"ok\"}"
