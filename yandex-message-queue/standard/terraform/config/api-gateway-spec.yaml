@@ -26,10 +26,90 @@ paths:
         function_id: "${functions.send_confirmation_email.function_id}"
         tag: "${functions.send_confirmation_email.version_tag}"
         service_account_id: "${functions.send_confirmation_email.sa_id}"
+
   "${auth_email_confirmation_api_endpoint}":
+    x-yc-apigateway-cors:
+      origin: true
+      methods: POST
     get:
+      summary: Confirm account email via token
+      operationId: confirm_email
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
       x-yc-apigateway-integration:
         type: dummy
         http_code: 200
         content:
-          "application/json": "{\"message\": \"ok\"}"
+          text/html: |-
+            <!DOCTYPE html>
+            <html>
+              <head>
+                <link rel="icon" href="data:,">
+              </head>
+              <body>
+                <script defer>
+                  function report(message) {
+                    window.document.body.innerHTML = '<div>' + message + '</div>'
+                  }
+                  function reportProblem(message) {
+                    report('Error: ' + message)
+                  }
+                  function reportSuccess(message) {
+                    report(message)
+                  }
+
+                  document.addEventListener("DOMContentLoaded", main)
+
+                  async function main() {
+                    if (new URLSearchParams(window.location.search).get("token") === null) {
+                      reportProblem("Failed to confirm email: token query parameter must be set")
+                    }
+                    try {
+                      const response = await fetch(window.location.origin + window.location.pathname, {
+                        method: "POST",
+                        headers: {
+                          "Content-Type": "application/json",
+                        },
+                        body: JSON.stringify({token: new URLSearchParams(window.location.search).get("token")}),
+                      })
+                      if (response.ok) {
+                        reportSuccess("Successfuly confirmed email.")
+                        const responseBody = await response.json()
+                        console.log(responseBody)
+                        return
+                      }
+
+                      const responseBody = await response.json()
+                      if ('errors' in responseBody) {
+                        reportProblem(JSON.stringify(responseBody.errors, null, 2))
+                        return
+                      }
+
+                      console.error("Unknown upstream server error format", data)
+                      throw new Error("Unknown upstream server error format")
+                    } catch (err) {
+                        console.error(err)
+                        reportProblem("Could not confirm email (server internal error).")
+                    }
+                  }
+                </script>
+              </body>
+            </html>
+
+    post:
+      x-yc-apigateway-integration:
+        type: cloud-functions
+        function_id: "${functions.confirm_email.function_id}"
+        tag: "${functions.confirm_email.version_tag}"
+        service_account_id: "${functions.confirm_email.sa_id}"
+  # "${auth_email_confirmation_api_endpoint}":
+  #   get:
+  #     x-yc-apigateway-integration:
+  #       type: dummy
+  #       http_code: 200
+  #       content:
+  #         "application/json": "{\"message\": \"ok\"}"

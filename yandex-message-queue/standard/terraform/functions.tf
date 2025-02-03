@@ -4,7 +4,8 @@ locals {
   build_dir           = "${local.project_root}/.zip"
 
   function_versions = {
-    send_confirmation_email = "0.1.0"
+    send_confirmation_email = "0.1.1"
+    confirm_email           = "0.1.1"
     test_ydb                = "0.0.3"
   }
 
@@ -13,6 +14,11 @@ locals {
       version                = "v${replace(local.function_versions.send_confirmation_email, ".", "-")}"
       target_source_code_dir = "${local.build_dir}/send-confirmation-email"
       zip_path               = "${local.build_dir}/v${local.function_versions.send_confirmation_email}-send-confirmation-email.zip"
+    }
+    confirm_email = {
+      version                = "v${replace(local.function_versions.confirm_email, ".", "-")}"
+      target_source_code_dir = "${local.build_dir}/confirm-email"
+      zip_path               = "${local.build_dir}/confirm-email-v${local.function_versions.confirm_email}.zip"
     }
     test_ydb = {
       version                = "v${replace(local.function_versions.test_ydb, ".", "-")}"
@@ -42,7 +48,7 @@ locals {
   ] : v => v })
 
   lockbox_secrets = {
-    confirmation_email = [
+    send_confirmation_email = [
       {
         id                   = data.yandex_lockbox_secret.app_sa_static_key.id
         version_id           = data.yandex_lockbox_secret.app_sa_static_key.current_version[0].id
@@ -67,7 +73,21 @@ locals {
         key                  = "password"
         environment_variable = local.env.SENDER_PASSWORD
       },
-    ]
+    ],
+    confirm_email = [
+      {
+        id                   = data.yandex_lockbox_secret.app_sa_static_key.id
+        version_id           = data.yandex_lockbox_secret.app_sa_static_key.current_version[0].id
+        key                  = "access_key_id"
+        environment_variable = local.env.AWS_ACCESS_KEY_ID
+      },
+      {
+        id                   = data.yandex_lockbox_secret.app_sa_static_key.id
+        version_id           = data.yandex_lockbox_secret.app_sa_static_key.current_version[0].id
+        key                  = "secret_access_key"
+        environment_variable = local.env.AWS_SECRET_ACCESS_KEY
+      },
+    ],
   }
 }
 
@@ -95,16 +115,12 @@ resource "archive_file" "functions" {
   type        = "zip"
 }
 
+// TODO: delete manager SA
 resource "yandex_iam_service_account" "cloud_functions_manager" {
   name        = "cloud-functions-manager"
   description = "service account for managing cloud functions"
 }
-// resource "yandex_resourcemanager_folder_iam_member" "cloud_functions_manager_folder_editor" {
-//   folder_id = local.folder_id
-// 
-//   role   = "editor"
-//   member = "serviceAccount:${yandex_iam_service_account.cloud_functions_manager.id}"
-// }
+
 resource "yandex_resourcemanager_folder_iam_member" "cloud_functions_manager_lockbox_payload_viewer" {
   folder_id = local.folder_id
 
@@ -130,7 +146,7 @@ resource "yandex_function" "send_confirmation_email" {
   }
 
   dynamic "secrets" {
-    for_each = toset(local.lockbox_secrets.confirmation_email)
+    for_each = toset(local.lockbox_secrets.send_confirmation_email)
     content {
       id                   = secrets.value.id
       version_id           = secrets.value.version_id
@@ -144,9 +160,47 @@ resource "yandex_function" "send_confirmation_email" {
   }
 
   depends_on = [
-    // TODO: turn back on 
-    // yandex_resourcemanager_folder_iam_member.cloud_functions_manager_folder_editor,
-    yandex_resourcemanager_folder_iam_member.cloud_functions_manager_lockbox_payload_viewer,
+    yandex_resourcemanager_folder_iam_member.app_lockbox_payload_viewer,
+  ]
+
+  lifecycle {
+    ignore_changes = [user_hash]
+  }
+}
+
+resource "yandex_function" "confirm_email" {
+  name        = "confirm-email"
+  description = "function for confirming account email via token"
+  runtime     = "golang121"
+  entrypoint  = "cmd/confirm-email-fn/handler.Handler"
+  tags        = [local.functions.confirm_email.version]
+  user_hash   = archive_file.functions["confirm_email"].output_base64sha256
+
+  memory             = 128
+  execution_timeout  = "10"
+  service_account_id = yandex_iam_service_account.cloud_functions_manager.id
+
+  environment = {
+    (local.env.YDB_DOC_API_ENDPOINT) = yandex_ydb_database_serverless.this.document_api_endpoint
+    (local.env.SQS_ENDPOINT)         = yandex_message_queue.email_confirmation.id
+  }
+
+  dynamic "secrets" {
+    for_each = toset(local.lockbox_secrets.confirm_email)
+    content {
+      id                   = secrets.value.id
+      version_id           = secrets.value.version_id
+      key                  = secrets.value.key
+      environment_variable = secrets.value.environment_variable
+    }
+  }
+
+  content {
+    zip_filename = archive_file.functions["confirm_email"].output_path
+  }
+
+  depends_on = [
+    yandex_resourcemanager_folder_iam_member.app_lockbox_payload_viewer,
   ]
 
   lifecycle {
@@ -180,19 +234,22 @@ resource "yandex_function" "test_ydb" {
   }
 
   depends_on = [
-    // TODO: turn back on 
-    // yandex_resourcemanager_folder_iam_member.cloud_functions_manager_folder_editor,
-    yandex_resourcemanager_folder_iam_member.cloud_functions_manager_lockbox_payload_viewer,
+    yandex_resourcemanager_folder_iam_member.app_lockbox_payload_viewer,
   ]
-}
 
-// There'll be an inevitable circular dependency "Cloud Function <--> API Gateway"
-// due to the Cloud Function having need in API Gateway url in order to generate
-// confirmation urls.
-// resource "yandex_function" "confirm_email" {}
+  lifecycle {
+    ignore_changes = [user_hash]
+  }
+}
 
 resource "yandex_function_iam_binding" "send_confirmation_email_caller" {
   function_id = yandex_function.send_confirmation_email.id
+  role        = "serverless.functions.invoker"
+
+  members = ["serviceAccount:${yandex_iam_service_account.auth_caller.id}"]
+}
+resource "yandex_function_iam_binding" "confirm_email_caller" {
+  function_id = yandex_function.confirm_email.id
   role        = "serverless.functions.invoker"
 
   members = ["serviceAccount:${yandex_iam_service_account.auth_caller.id}"]

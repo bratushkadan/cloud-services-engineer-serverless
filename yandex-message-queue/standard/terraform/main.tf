@@ -13,6 +13,12 @@ resource "yandex_iam_service_account" "auth_caller" {
   description = "serverless ymq type standard practicum course tests auth functions caller sa"
 }
 
+resource "yandex_resourcemanager_folder_iam_member" "app_lockbox_payload_viewer" {
+  folder_id = local.folder_id
+
+  role   = "lockbox.payloadViewer"
+  member = "serviceAccount:${yandex_iam_service_account.app.id}"
+}
 resource "yandex_resourcemanager_folder_iam_member" "app_ydb_writer" {
   folder_id = local.folder_id
 
