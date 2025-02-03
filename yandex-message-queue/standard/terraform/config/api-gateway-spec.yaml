@@ -3,14 +3,6 @@ info:
   version: 1.0.0
   title: Floral Auth API
 
-# x-yc-apigateway:
-#   variables:
-#     installation:
-#       default: prod
-#       enum:
-#         - prod
-#         - dev
-
 paths:
   /test-ydb:
     get:
@@ -21,6 +13,21 @@ paths:
         service_account_id: "${functions.test_ydb.sa_id}"
   "/auth:send-confirmation-email":
     post:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+              properties:
+                email:
+                  type: string
+      x-yc-apigateway-validator:
+        validateRequestBody: true
+      x-yc-apigateway-rate-limit:
+        allRequests:
+          rpm: 10
       x-yc-apigateway-integration:
         type: cloud-functions
         function_id: "${functions.send_confirmation_email.function_id}"
@@ -101,15 +108,21 @@ paths:
             </html>
 
     post:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - token
+              properties:
+                token:
+                  type: string
+      x-yc-apigateway-validator:
+        validateRequestBody: true
       x-yc-apigateway-integration:
         type: cloud-functions
         function_id: "${functions.confirm_email.function_id}"
         tag: "${functions.confirm_email.version_tag}"
         service_account_id: "${functions.confirm_email.sa_id}"
-  # "${auth_email_confirmation_api_endpoint}":
-  #   get:
-  #     x-yc-apigateway-integration:
-  #       type: dummy
-  #       http_code: 200
-  #       content:
-  #         "application/json": "{\"message\": \"ok\"}"
+
