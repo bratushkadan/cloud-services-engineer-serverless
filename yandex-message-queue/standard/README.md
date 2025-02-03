@@ -12,9 +12,11 @@
 - [x] Move setup to Terraform
 - [x] Implement Advanced Terraform Code Packing
 - [x] Learn how IAM authorization works for Cloud Function & Serverless ecosystem
-- [ ] Deploy Email Confirmation Cloud Function
+- [x] Deploy Email Confirmation Cloud function
+- [x] Add Browser Email Confirmation Endpoit
 - [x] Learn if I can get API Gateway Host header via confirmation link sender function in order to break circular dependency "API Gateway (endpoint) <--> Cloud Function (id)"
-- [ ] Add Rate Limiting to API Gateway
+- [x] Add Rate Limiting to API Gateway
+- [x] Add validation to API Gateway
 
 # New workflow with Terraform + yc/aws CLI
 
